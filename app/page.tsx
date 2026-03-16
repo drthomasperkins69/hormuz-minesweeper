@@ -500,6 +500,7 @@ export default function HormuzMinesweeper() {
   const animFrameRef = useRef<number>(0);
   const boardRef = useRef<CellState[][] | null>(null);
   const tankersBlownUpRef = useRef(0);
+  const statusRef = useRef<GameStatus>("idle");
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggeredRef = useRef(false);
 
@@ -514,6 +515,7 @@ export default function HormuzMinesweeper() {
   // Keep refs in sync for animation loop access
   useEffect(() => { boardRef.current = board; }, [board]);
   useEffect(() => { tankersBlownUpRef.current = tankersBlownUp; }, [tankersBlownUp]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   // Fetch leaderboard on mount and after score submission
   const fetchLeaderboard = useCallback(async () => {
@@ -580,10 +582,12 @@ export default function HormuzMinesweeper() {
       { progress: 0.85, speed: 0.0001, lane: 1, size: 0.75, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
     ];
 
-    // Shipping lane waypoints — stay in the water channel
+    // Shipping lane waypoints — central water channel, well clear of coastlines
     const lanes = [
-      [[55.2, 26.25], [55.5, 26.22], [55.8, 26.20], [56.0, 26.25], [56.2, 26.28], [56.4, 26.15], [56.8, 26.00]],
-      [[56.8, 25.95], [56.4, 26.10], [56.2, 26.22], [56.0, 26.20], [55.8, 26.15], [55.5, 26.15], [55.2, 26.18]],
+      // Eastbound (Persian Gulf → Gulf of Oman)
+      [[55.3, 26.30], [55.6, 26.30], [55.8, 26.30], [56.0, 26.33], [56.15, 26.35], [56.3, 26.30], [56.5, 26.15], [56.7, 26.05]],
+      // Westbound (Gulf of Oman → Persian Gulf)
+      [[56.7, 25.98], [56.5, 26.08], [56.3, 26.24], [56.15, 26.30], [56.0, 26.28], [55.8, 26.25], [55.6, 26.25], [55.3, 26.25]],
     ];
 
     function getLanePos(lane: number[][], t: number): [number, number, number] {
@@ -602,7 +606,7 @@ export default function HormuzMinesweeper() {
       ctx.save();
       ctx.translate(x, y);
       ctx.rotate(angle);
-      const s = 6 * size;
+      const s = 12 * size;
       // Hull
       ctx.fillStyle = "rgba(80,80,80,0.8)";
       ctx.beginPath();
@@ -667,7 +671,7 @@ export default function HormuzMinesweeper() {
       missiles.push({
         startX: lonToX(lon, w), startY: latToY(startLat, h),
         endX: tx + missOffset, endY: ty + (willHit ? 0 : missOffset * 0.5),
-        progress: 0, speed: 0.008 + Math.random() * 0.006,
+        progress: 0, speed: 0.002 + Math.random() * 0.0015,
         targetShipIdx: target.i,
         willHit,
         trail: [], exploding: 0,
@@ -763,14 +767,18 @@ export default function HormuzMinesweeper() {
         const lane = lanes[ship.lane];
         const [sx, sy, angle] = getLanePos(lane, ship.progress);
 
-        // Only travel on water — skip if on land
+        // Only travel on water — if on land, skip ahead until back on water
         const shipLon = MAP_BOUNDS.minLon + (sx / w) * (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon);
         const shipLat = MAP_BOUNDS.maxLat - (sy / h) * (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat);
-        if (isLandCell(shipLon, shipLat)) continue;
+        if (isLandCell(shipLon, shipLat)) {
+          ship.progress += ship.speed * 10; // jump ahead to get past land
+          if (ship.progress > 1) ship.progress -= 1;
+          continue;
+        }
 
-        // Check mine collision: convert ship pixel position to grid cell
+        // Check mine collision: convert ship pixel position to grid cell (only during active game)
         const currentBoard = boardRef.current;
-        if (currentBoard) {
+        if (currentBoard && statusRef.current === "playing") {
           const shipCol = Math.floor(sx / cs);
           const shipRow = Math.floor(sy / cs);
           if (shipRow >= 0 && shipRow < currentBoard.length && shipCol >= 0 && shipCol < currentBoard[0].length) {
@@ -812,8 +820,9 @@ export default function HormuzMinesweeper() {
         drawShip(ctx, sx, sy, angle, ship.size);
       }
 
-      // Spawn missiles periodically
-      if (t - lastMissileTime > 1.5 + Math.random() * 2) {
+      // Spawn missiles periodically (only while game is active)
+      const gameActive = statusRef.current === "playing" || statusRef.current === "idle";
+      if (gameActive && t - lastMissileTime > 1.5 + Math.random() * 2) {
         spawnMissile(t);
         lastMissileTime = t;
       }
@@ -1834,6 +1843,21 @@ export default function HormuzMinesweeper() {
                 }}
               >
                 Skip
+              </button>
+              <button
+                onClick={() => { setShowNameInput(false); resetGame(); }}
+                style={{
+                  padding: "8px 20px",
+                  background: "#2a5a3a",
+                  color: "#4ade80",
+                  border: "1px solid #4ade80",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontWeight: "bold",
+                  fontSize: "14px",
+                }}
+              >
+                🔄 Play Again
               </button>
             </div>
           </div>
