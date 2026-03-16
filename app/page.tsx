@@ -438,10 +438,10 @@ function reveal(board: CellState[][], r: number, c: number, rows: number, cols: 
 }
 
 function checkWin(board: CellState[][], rows: number, cols: number, _totalMines: number): boolean {
-  // Win when all water cells are revealed (mines get destroyed when hit, so we just check for unrevealed water)
+  // Classic minesweeper: win when all non-mine water cells are revealed
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      if (!board[r][c].isLand && !board[r][c].revealed) return false;
+      if (!board[r][c].isLand && !board[r][c].mine && !board[r][c].revealed) return false;
     }
   }
   return true;
@@ -1122,40 +1122,28 @@ export default function HormuzMinesweeper() {
     if (cell.revealed || cell.flagged) return;
 
     if (cell.mine) {
-      // Mine explodes but game continues — mine destroyed, oil +$10, explosion persists
-      const newBoard = board.map(row => row.map(cl => ({ ...cl })));
-      newBoard[r][c] = { ...newBoard[r][c], mine: false, revealed: true, detonated: true };
-      // Recalculate adjacents around the destroyed mine
-      for (let dr = -1; dr <= 1; dr++) {
-        for (let dc = -1; dc <= 1; dc++) {
-          const nr = r + dr, nc = c + dc;
-          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !newBoard[nr][nc].isLand) {
-            let count = 0;
-            for (let ddr = -1; ddr <= 1; ddr++) {
-              for (let ddc = -1; ddc <= 1; ddc++) {
-                const nnr = nr + ddr, nnc = nc + ddc;
-                if (nnr >= 0 && nnr < rows && nnc >= 0 && nnc < cols && newBoard[nnr][nnc].mine) count++;
-              }
-            }
-            newBoard[nr][nc].adjacentMines = count;
+      // GAME OVER — classic minesweeper: reveal all mines, chain explosions
+      const newBoard = board.map(row => row.map(cl => ({
+        ...cl,
+        revealed: cl.mine ? true : cl.revealed,
+        detonated: cl.mine ? true : cl.detonated,
+      })));
+      newBoard[r][c] = { ...newBoard[r][c], revealed: true, detonated: true };
+      setBoard(newBoard);
+      setStatus("lost");
+      // Chain explosions on all mines with staggered timing from clicked mine
+      const now = Date.now();
+      const mineExplosions: {r: number; c: number; startTime: number}[] = [];
+      mineExplosions.push({ r, c, startTime: now });
+      for (let mr = 0; mr < rows; mr++) {
+        for (let mc = 0; mc < cols; mc++) {
+          if (newBoard[mr][mc].mine && (mr !== r || mc !== c)) {
+            const dist = Math.sqrt((mr - r) ** 2 + (mc - c) ** 2);
+            mineExplosions.push({ r: mr, c: mc, startTime: now + dist * 80 });
           }
         }
       }
-      setBoard(newBoard);
-      // Single mine explosion animation
-      setExplosions([{ r, c, startTime: Date.now() }]);
-      // Oil price jumps +$10
-      setOilPrice(prev => {
-        const next = Math.min(prev + 10, 200);
-        if (next >= 200) {
-          setStatus("lost");
-        }
-        return next;
-      });
-      // Show popup
-      setEventPopup({ title: "MINE DETONATED!", message: "You hit a sea mine! It has been destroyed but oil prices surge +$10/bbl!", icon: "💣" });
-      // Check win (mine was removed, so fewer mines to avoid now)
-      if (checkWin(newBoard, rows, cols, actualMines)) setStatus("won");
+      setExplosions(mineExplosions);
       return;
     }
 
@@ -1182,7 +1170,7 @@ export default function HormuzMinesweeper() {
     if (flaggedNeighbors !== cell.adjacentMines) return;
 
     let newBoard = board.map(row => row.map(cl => ({ ...cl })));
-    const hitMines: [number, number][] = [];
+    let hitMine = false;
 
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
@@ -1191,11 +1179,8 @@ export default function HormuzMinesweeper() {
           const neighbor = newBoard[nr][nc];
           if (!neighbor.revealed && !neighbor.flagged && !neighbor.isLand) {
             if (neighbor.mine) {
-              hitMines.push([nr, nc]);
-              // Mine explodes but doesn't end game — destroy it, mark detonated
-              newBoard[nr][nc].mine = false;
+              hitMine = true;
               newBoard[nr][nc].revealed = true;
-              newBoard[nr][nc].detonated = true;
             } else {
               newBoard = reveal(newBoard, nr, nc, rows, cols);
             }
@@ -1204,34 +1189,26 @@ export default function HormuzMinesweeper() {
       }
     }
 
-    if (hitMines.length > 0) {
-      // Recalculate adjacents for affected areas
-      for (const [mr, mc] of hitMines) {
-        for (let dr2 = -1; dr2 <= 1; dr2++) {
-          for (let dc2 = -1; dc2 <= 1; dc2++) {
-            const nr2 = mr + dr2, nc2 = mc + dc2;
-            if (nr2 >= 0 && nr2 < rows && nc2 >= 0 && nc2 < cols && !newBoard[nr2][nc2].isLand) {
-              let cnt = 0;
-              for (let ddr = -1; ddr <= 1; ddr++) {
-                for (let ddc = -1; ddc <= 1; ddc++) {
-                  const nnr = nr2 + ddr, nnc = nc2 + ddc;
-                  if (nnr >= 0 && nnr < rows && nnc >= 0 && nnc < cols && newBoard[nnr][nnc].mine) cnt++;
-                }
-              }
-              newBoard[nr2][nc2].adjacentMines = cnt;
-            }
+    if (hitMine) {
+      // GAME OVER — reveal all mines with chain explosions
+      newBoard = newBoard.map(row => row.map(cl => ({
+        ...cl,
+        revealed: cl.mine ? true : cl.revealed,
+        detonated: cl.mine ? true : cl.detonated,
+      })));
+      setBoard(newBoard);
+      setStatus("lost");
+      const now = Date.now();
+      const mineExplosions: {r: number; c: number; startTime: number}[] = [];
+      for (let mr = 0; mr < rows; mr++) {
+        for (let mc = 0; mc < cols; mc++) {
+          if (newBoard[mr][mc].mine) {
+            const dist = Math.sqrt((mr - r) ** 2 + (mc - c) ** 2);
+            mineExplosions.push({ r: mr, c: mc, startTime: now + dist * 80 });
           }
         }
       }
-      setExplosions(hitMines.map(([mr, mc]) => ({ r: mr, c: mc, startTime: Date.now() })));
-      setOilPrice(prev => {
-        const next = Math.min(prev + hitMines.length * 10, 200);
-        if (next >= 200) setStatus("lost");
-        return next;
-      });
-      setEventPopup({ title: "MINES DETONATED!", message: `${hitMines.length} mine${hitMines.length > 1 ? "s" : ""} exploded! Oil surges +$${hitMines.length * 10}/bbl!`, icon: "💣" });
-      setBoard(newBoard);
-      if (checkWin(newBoard, rows, cols, actualMines)) setStatus("won");
+      setExplosions(mineExplosions);
     } else {
       setBoard(newBoard);
       if (checkWin(newBoard, rows, cols, actualMines)) setStatus("won");
@@ -1585,7 +1562,9 @@ export default function HormuzMinesweeper() {
           }}>
             {status === "won"
               ? "🎖️ STRAIT SECURED — ALL MINES CLEARED! OIL MARKETS STABILIZED!"
-              : "📉 OIL HIT $200/BBL — GLOBAL ECONOMY COLLAPSED!"}
+              : oilPrice >= 200
+                ? "📉 OIL HIT $200/BBL — GLOBAL ECONOMY COLLAPSED!"
+                : "💥 MINE DETONATED — STRAIT COMPROMISED!"}
             {tankersBlownUp > 0 && (
               <div style={{ fontSize: "13px", marginTop: "4px", color: "#ffaa44" }}>
                 🚢 {tankersBlownUp} tanker{tankersBlownUp > 1 ? "s" : ""} destroyed by mines
