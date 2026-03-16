@@ -8,6 +8,7 @@ type CellState = {
   flagged: boolean;
   adjacentMines: number;
   isLand: boolean;
+  detonated: boolean; // was a mine that exploded (persists visually)
 };
 
 type GameStatus = "idle" | "playing" | "won" | "lost";
@@ -368,6 +369,7 @@ function createBoard(rows: number, cols: number, mines: number, firstR: number, 
       flagged: false,
       adjacentMines: 0,
       isLand: landMask[r][c],
+      detonated: false,
     }))
   );
 
@@ -570,18 +572,18 @@ export default function HormuzMinesweeper() {
     // Ship state: each ship travels along a shipping lane path
     type Ship = { progress: number; speed: number; lane: number; size: number; alive: boolean; explodeTimer: number; explodeX: number; explodeY: number; respawnTimer: number; };
     const ships: Ship[] = [
-      { progress: 0, speed: 0.0004, lane: 0, size: 1.0, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
-      { progress: 0.35, speed: 0.0003, lane: 0, size: 0.8, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
-      { progress: 0.7, speed: 0.00035, lane: 0, size: 0.9, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
-      { progress: 0.1, speed: 0.00045, lane: 1, size: 1.0, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
-      { progress: 0.55, speed: 0.00032, lane: 1, size: 0.85, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
-      { progress: 0.85, speed: 0.0004, lane: 1, size: 0.75, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0, speed: 0.0001, lane: 0, size: 1.0, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.35, speed: 0.000075, lane: 0, size: 0.8, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.7, speed: 0.0000875, lane: 0, size: 0.9, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.1, speed: 0.0001125, lane: 1, size: 1.0, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.55, speed: 0.00008, lane: 1, size: 0.85, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.85, speed: 0.0001, lane: 1, size: 0.75, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
     ];
 
-    // Shipping lane waypoints
+    // Shipping lane waypoints — stay in the water channel
     const lanes = [
-      [[55.0, 26.2], [55.5, 26.15], [56.2, 26.15], [57.0, 25.95]],
-      [[57.0, 25.85], [56.15, 26.05], [55.5, 26.0], [55.0, 26.05]],
+      [[55.2, 26.25], [55.5, 26.22], [55.8, 26.20], [56.0, 26.25], [56.2, 26.28], [56.4, 26.15], [56.8, 26.00]],
+      [[56.8, 25.95], [56.4, 26.10], [56.2, 26.22], [56.0, 26.20], [55.8, 26.15], [55.5, 26.15], [55.2, 26.18]],
     ];
 
     function getLanePos(lane: number[][], t: number): [number, number, number] {
@@ -761,6 +763,11 @@ export default function HormuzMinesweeper() {
         const lane = lanes[ship.lane];
         const [sx, sy, angle] = getLanePos(lane, ship.progress);
 
+        // Only travel on water — skip if on land
+        const shipLon = MAP_BOUNDS.minLon + (sx / w) * (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon);
+        const shipLat = MAP_BOUNDS.maxLat - (sy / h) * (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat);
+        if (isLandCell(shipLon, shipLat)) continue;
+
         // Check mine collision: convert ship pixel position to grid cell
         const currentBoard = boardRef.current;
         if (currentBoard) {
@@ -779,6 +786,7 @@ export default function HormuzMinesweeper() {
               const newBoard = currentBoard.map(row => row.map(cl => ({ ...cl })));
               newBoard[shipRow][shipCol].mine = false;
               newBoard[shipRow][shipCol].revealed = true;
+              newBoard[shipRow][shipCol].detonated = true;
               // Recalculate adjacent counts around the removed mine
               for (let dr = -1; dr <= 1; dr++) {
                 for (let dc = -1; dc <= 1; dc++) {
@@ -1114,9 +1122,9 @@ export default function HormuzMinesweeper() {
     if (cell.revealed || cell.flagged) return;
 
     if (cell.mine) {
-      // Mine explodes but game continues — just that mine is destroyed, oil +$10
+      // Mine explodes but game continues — mine destroyed, oil +$10, explosion persists
       const newBoard = board.map(row => row.map(cl => ({ ...cl })));
-      newBoard[r][c] = { ...newBoard[r][c], mine: false, revealed: true };
+      newBoard[r][c] = { ...newBoard[r][c], mine: false, revealed: true, detonated: true };
       // Recalculate adjacents around the destroyed mine
       for (let dr = -1; dr <= 1; dr++) {
         for (let dc = -1; dc <= 1; dc++) {
@@ -1184,9 +1192,10 @@ export default function HormuzMinesweeper() {
           if (!neighbor.revealed && !neighbor.flagged && !neighbor.isLand) {
             if (neighbor.mine) {
               hitMines.push([nr, nc]);
-              // Mine explodes but doesn't end game — destroy it
+              // Mine explodes but doesn't end game — destroy it, mark detonated
               newBoard[nr][nc].mine = false;
               newBoard[nr][nc].revealed = true;
+              newBoard[nr][nc].detonated = true;
             } else {
               newBoard = reveal(newBoard, nr, nc, rows, cols);
             }
@@ -1483,6 +1492,7 @@ export default function HormuzMinesweeper() {
                 const isFlagged = cell?.flagged ?? false;
                 const isMine = cell?.mine ?? false;
                 const adj = cell?.adjacentMines ?? 0;
+                const isDetonated = cell?.detonated ?? false;
                 const isExploded = isRevealed && isMine && status === "lost";
                 const explosion = explosions.find(e => e.r === r && e.c === c);
                 const isExploding = explosion && Date.now() >= explosion.startTime;
@@ -1524,11 +1534,13 @@ export default function HormuzMinesweeper() {
                       border: isRevealed
                         ? "1px solid rgba(100,130,160,0.3)"
                         : "2px outset rgba(120,180,220,0.5)",
-                      background: isExploded
-                        ? "rgba(255,50,50,0.7)"
-                        : isRevealed
-                          ? "rgba(180,200,220,0.2)"
-                          : "rgba(60,120,180,0.3)",
+                      background: isDetonated
+                        ? "rgba(255,80,0,0.5)"
+                        : isExploded
+                          ? "rgba(255,50,50,0.7)"
+                          : isRevealed
+                            ? "rgba(180,200,220,0.2)"
+                            : "rgba(60,120,180,0.3)",
                       transition: "background 0.1s",
                       color: isRevealed && !isMine && adj > 0 ? (NUM_COLORS[adj] || "#000") : "#000",
                       textShadow: isRevealed && !isMine && adj > 0 ? "0 0 3px rgba(255,255,255,0.6)" : "none",
@@ -1547,8 +1559,9 @@ export default function HormuzMinesweeper() {
                         zIndex: 10,
                       }} />
                     )}
-                    {isRevealed && isMine && (isExploding ? "💥" : "💣")}
-                    {isRevealed && !isMine && adj > 0 && adj}
+                    {isDetonated && "💥"}
+                    {isRevealed && isMine && !isDetonated && (isExploding ? "💥" : "💣")}
+                    {isRevealed && !isMine && !isDetonated && adj > 0 && adj}
                   </div>
                 );
               })
