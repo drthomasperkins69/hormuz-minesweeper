@@ -21,7 +21,7 @@ const DIFFICULTIES: Record<Difficulty, { rows: number; cols: number; mines: numb
 
 // --- Geographic map using real coordinates ---
 // Zoomed in tightly on the Strait of Hormuz
-const MAP_BOUNDS = { minLon: 55.0, maxLon: 57.0, minLat: 25.8, maxLat: 26.8 };
+const MAP_BOUNDS = { minLon: 55.2, maxLon: 56.8, minLat: 25.9, maxLat: 26.65 };
 
 function lonToX(lon: number, w: number) {
   return ((lon - MAP_BOUNDS.minLon) / (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon)) * w;
@@ -282,29 +282,32 @@ function drawMap(ctx: CanvasRenderingContext2D, w: number, h: number) {
   ctx.shadowColor = "rgba(0,0,0,0.8)";
   ctx.shadowBlur = 4;
 
-  ctx.fillStyle = "#ffffff";
-  ctx.font = `bold ${Math.max(14, Math.floor(w * 0.022))}px 'Georgia', serif`;
-  ctx.fillText("I R A N", lonToX(55.3, w), latToY(26.72, h));
+  // Country names — positioned over LAND
+  ctx.fillStyle = "rgba(255,255,255,0.85)";
+  ctx.font = `bold ${Math.max(16, Math.floor(w * 0.025))}px 'Georgia', serif`;
+  ctx.fillText("I R A N", lonToX(55.5, w), latToY(26.60, h));  // over Iranian land mass
 
-  ctx.font = `bold ${Math.max(12, Math.floor(w * 0.018))}px 'Georgia', serif`;
-  ctx.fillText("U.A.E.", lonToX(55.1, w), latToY(25.92, h));
-  ctx.fillText("OMAN", lonToX(56.55, w), latToY(25.88, h));
+  ctx.font = `bold ${Math.max(13, Math.floor(w * 0.02))}px 'Georgia', serif`;
+  ctx.fillText("U.A.E.", lonToX(55.3, w), latToY(25.95, h));   // over UAE land
+  ctx.fillText("OMAN", lonToX(56.15, w), latToY(26.25, h));     // over Musandam land
 
+  // Water body names — positioned over WATER
   ctx.font = `italic ${Math.max(11, Math.floor(w * 0.016))}px 'Georgia', serif`;
   ctx.fillStyle = "#c8e0f0";
-  ctx.fillText("Persian Gulf", lonToX(55.05, w), latToY(26.25, h));
-  ctx.fillText("Gulf of Oman", lonToX(56.55, w), latToY(26.05, h));
+  ctx.fillText("Persian Gulf", lonToX(55.25, w), latToY(26.15, h));
+  ctx.fillText("Gulf of Oman", lonToX(56.45, w), latToY(26.0, h));
 
-  ctx.font = `italic bold ${Math.max(11, Math.floor(w * 0.016))}px 'Georgia', serif`;
+  ctx.font = `italic bold ${Math.max(12, Math.floor(w * 0.018))}px 'Georgia', serif`;
   ctx.fillStyle = "#a8d0e8";
-  ctx.fillText("Strait of Hormuz", lonToX(55.7, w), latToY(26.22, h));
+  ctx.fillText("Strait of Hormuz", lonToX(55.7, w), latToY(26.12, h));
 
+  // Island names
   ctx.font = `${Math.max(9, Math.floor(w * 0.013))}px 'Georgia', serif`;
   ctx.fillStyle = "#e8d8a0";
-  ctx.fillText("Qeshm", lonToX(55.65, w), latToY(26.50, h));
-  ctx.fillText("Hormuz", lonToX(56.35, w), latToY(26.40, h));
-  ctx.fillText("Larak", lonToX(56.22, w), latToY(26.54, h));
-  ctx.fillText("Hengam", lonToX(55.82, w), latToY(26.33, h));
+  ctx.fillText("Qeshm", lonToX(55.65, w), latToY(26.42, h));
+  ctx.fillText("Hormuz", lonToX(56.42, w), latToY(26.46, h));
+  ctx.fillText("Larak", lonToX(56.28, w), latToY(26.52, h));
+  ctx.fillText("Hengam", lonToX(55.85, w), latToY(26.37, h));
 
   // City markers
   ctx.shadowBlur = 0;
@@ -484,9 +487,14 @@ export default function HormuzMinesweeper() {
   const [status, setStatus] = useState<GameStatus>("idle");
   const [flagCount, setFlagCount] = useState(0);
   const [time, setTime] = useState(0);
+  const [oilPrice, setOilPrice] = useState(50);
+  const [explosions, setExplosions] = useState<{r: number; c: number; startTime: number}[]>([]);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const oilTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mapDataRef = useRef<string | null>(null);
+  const animCanvasRef = useRef<HTMLCanvasElement>(null);
+  const animFrameRef = useRef<number>(0);
 
   // Pre-compute land mask
   const landMask = useMemo(() => buildLandMask(rows, cols), [rows, cols]);
@@ -504,18 +512,335 @@ export default function HormuzMinesweeper() {
 
   const actualMines = Math.min(mines, waterCellCount - 9); // ensure space around first click
 
-  // Generate map background
+  // Generate static map background
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const cellSize = 28;
-    const w = cols * cellSize;
-    const h = rows * cellSize;
+    const cs = 28;
+    const w = cols * cs;
+    const h = rows * cs;
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d")!;
     drawMap(ctx, w, h);
     mapDataRef.current = canvas.toDataURL();
+  }, [rows, cols]);
+
+  // Animated overlay canvas — water shimmer, waves, ships
+  useEffect(() => {
+    const canvas = animCanvasRef.current;
+    if (!canvas) return;
+    const cs = 28;
+    const w = cols * cs;
+    const h = rows * cs;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+
+    // Ship state: each ship travels along a shipping lane path
+    type Ship = { progress: number; speed: number; lane: number; size: number; };
+    const ships: Ship[] = [
+      { progress: 0, speed: 0.0004, lane: 0, size: 1.0 },
+      { progress: 0.35, speed: 0.0003, lane: 0, size: 0.8 },
+      { progress: 0.7, speed: 0.00035, lane: 0, size: 0.9 },
+      { progress: 0.1, speed: 0.00045, lane: 1, size: 1.0 },
+      { progress: 0.55, speed: 0.00032, lane: 1, size: 0.85 },
+      { progress: 0.85, speed: 0.0004, lane: 1, size: 0.75 },
+    ];
+
+    // Shipping lane waypoints
+    const lanes = [
+      [[55.0, 26.2], [55.5, 26.15], [56.2, 26.15], [57.0, 25.95]],
+      [[57.0, 25.85], [56.15, 26.05], [55.5, 26.0], [55.0, 26.05]],
+    ];
+
+    function getLanePos(lane: number[][], t: number): [number, number, number] {
+      const segs = lane.length - 1;
+      const seg = Math.min(Math.floor(t * segs), segs - 1);
+      const localT = (t * segs) - seg;
+      const x0 = lonToX(lane[seg][0], w), y0 = latToY(lane[seg][1], h);
+      const x1 = lonToX(lane[seg + 1][0], w), y1 = latToY(lane[seg + 1][1], h);
+      const x = x0 + (x1 - x0) * localT;
+      const y = y0 + (y1 - y0) * localT;
+      const angle = Math.atan2(y1 - y0, x1 - x0);
+      return [x, y, angle];
+    }
+
+    function drawShip(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, size: number) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      const s = 6 * size;
+      // Hull
+      ctx.fillStyle = "rgba(80,80,80,0.8)";
+      ctx.beginPath();
+      ctx.moveTo(s * 1.5, 0);
+      ctx.lineTo(s * 0.3, -s * 0.4);
+      ctx.lineTo(-s * 1.2, -s * 0.35);
+      ctx.lineTo(-s * 1.2, s * 0.35);
+      ctx.lineTo(s * 0.3, s * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      // Bridge
+      ctx.fillStyle = "rgba(200,200,200,0.7)";
+      ctx.fillRect(-s * 0.6, -s * 0.2, s * 0.4, s * 0.4);
+      // Wake
+      ctx.strokeStyle = "rgba(255,255,255,0.2)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(-s * 1.2, -s * 0.1);
+      ctx.lineTo(-s * 3, -s * 0.5);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-s * 1.2, s * 0.1);
+      ctx.lineTo(-s * 3, s * 0.5);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Missile state
+    type Missile = {
+      startX: number; startY: number;
+      endX: number; endY: number;
+      progress: number; speed: number;
+      fromNorth: boolean; // true = Iran firing south, false = south firing north
+      trail: [number, number][];
+      exploding: number; // 0 = flying, >0 = explosion timer
+    };
+    const missiles: Missile[] = [];
+    let lastMissileTime = 0;
+
+    // Launch points: Iran coast (north) and Arab coast (south)
+    const iranLaunchLons = [55.4, 55.7, 56.0, 56.3, 55.5, 55.9];
+    const arabLaunchLons = [55.5, 55.8, 56.1, 55.6, 55.9, 56.0];
+
+    function spawnMissile(t: number) {
+      const fromNorth = Math.random() > 0.5;
+      if (fromNorth) {
+        const lon = iranLaunchLons[Math.floor(Math.random() * iranLaunchLons.length)];
+        const startLat = 26.55 + Math.random() * 0.05;
+        const endLon = lon + (Math.random() - 0.5) * 0.4;
+        const endLat = 25.95 + Math.random() * 0.15;
+        missiles.push({
+          startX: lonToX(lon, w), startY: latToY(startLat, h),
+          endX: lonToX(endLon, w), endY: latToY(endLat, h),
+          progress: 0, speed: 0.008 + Math.random() * 0.006,
+          fromNorth: true, trail: [], exploding: 0,
+        });
+      } else {
+        const lon = arabLaunchLons[Math.floor(Math.random() * arabLaunchLons.length)];
+        const startLat = 26.0 + Math.random() * 0.1;
+        const endLon = lon + (Math.random() - 0.5) * 0.4;
+        const endLat = 26.50 + Math.random() * 0.1;
+        missiles.push({
+          startX: lonToX(lon, w), startY: latToY(startLat, h),
+          endX: lonToX(endLon, w), endY: latToY(endLat, h),
+          progress: 0, speed: 0.008 + Math.random() * 0.006,
+          fromNorth: false, trail: [], exploding: 0,
+        });
+      }
+    }
+
+    let startTime = performance.now();
+
+    function animate(now: number) {
+      const t = (now - startTime) / 1000; // seconds
+      ctx.clearRect(0, 0, w, h);
+
+      // Water ripple/shimmer effect
+      for (let y = 0; y < h; y += 8) {
+        for (let x = 0; x < w; x += 8) {
+          // Check if this pixel is roughly water (not land)
+          const lon = MAP_BOUNDS.minLon + (x / w) * (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon);
+          const lat = MAP_BOUNDS.maxLat - (y / h) * (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat);
+          if (isLandCell(lon, lat)) continue;
+
+          const wave1 = Math.sin(x * 0.03 + t * 1.5) * Math.cos(y * 0.04 + t * 0.8);
+          const wave2 = Math.sin(x * 0.05 - t * 1.2 + y * 0.02) * 0.5;
+          const shimmer = (wave1 + wave2) * 0.5;
+          const alpha = 0.02 + shimmer * 0.03;
+          if (alpha > 0) {
+            ctx.fillStyle = `rgba(180,220,255,${Math.abs(alpha)})`;
+            ctx.fillRect(x, y, 8, 8);
+          }
+        }
+      }
+
+      // Animated wave lines
+      ctx.strokeStyle = "rgba(255,255,255,0.06)";
+      ctx.lineWidth = 1;
+      for (let i = 0; i < 6; i++) {
+        ctx.beginPath();
+        const baseY = h * 0.3 + i * h * 0.08;
+        for (let x = 0; x < w; x += 3) {
+          const yOff = Math.sin(x * 0.015 + t * (0.8 + i * 0.15) + i * 2) * 4;
+          if (x === 0) ctx.moveTo(x, baseY + yOff);
+          else ctx.lineTo(x, baseY + yOff);
+        }
+        ctx.stroke();
+      }
+
+      // Draw ships
+      for (const ship of ships) {
+        ship.progress += ship.speed;
+        if (ship.progress > 1) ship.progress -= 1;
+        const lane = lanes[ship.lane];
+        const [sx, sy, angle] = getLanePos(lane, ship.progress);
+        drawShip(ctx, sx, sy, angle, ship.size);
+      }
+
+      // Spawn missiles periodically
+      if (t - lastMissileTime > 1.5 + Math.random() * 2) {
+        spawnMissile(t);
+        lastMissileTime = t;
+      }
+
+      // Update and draw missiles
+      for (let i = missiles.length - 1; i >= 0; i--) {
+        const m = missiles[i];
+
+        if (m.exploding > 0) {
+          // Explosion animation
+          m.exploding += 0.03;
+          if (m.exploding > 1) {
+            missiles.splice(i, 1);
+            continue;
+          }
+          const ex = m.endX;
+          const ey = m.endY;
+          const r = m.exploding * 25;
+          const alpha = 1 - m.exploding;
+
+          // Fireball
+          const fireGrad = ctx.createRadialGradient(ex, ey, 0, ex, ey, r);
+          fireGrad.addColorStop(0, `rgba(255,255,200,${alpha * 0.9})`);
+          fireGrad.addColorStop(0.3, `rgba(255,160,50,${alpha * 0.7})`);
+          fireGrad.addColorStop(0.6, `rgba(255,80,20,${alpha * 0.5})`);
+          fireGrad.addColorStop(1, `rgba(200,30,0,0)`);
+          ctx.fillStyle = fireGrad;
+          ctx.beginPath();
+          ctx.arc(ex, ey, r, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Sparks
+          for (let s = 0; s < 6; s++) {
+            const ang = s * Math.PI / 3 + m.exploding * 4;
+            const dist = r * (0.5 + m.exploding * 0.8);
+            const sx = ex + Math.cos(ang) * dist;
+            const sy = ey + Math.sin(ang) * dist;
+            ctx.fillStyle = `rgba(255,200,50,${alpha * 0.6})`;
+            ctx.beginPath();
+            ctx.arc(sx, sy, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          continue;
+        }
+
+        // Update position
+        m.progress += m.speed;
+        const mx = m.startX + (m.endX - m.startX) * m.progress;
+        // Add arc (missile goes up then down)
+        const arc = -Math.sin(m.progress * Math.PI) * 40;
+        const my = m.startY + (m.endY - m.startY) * m.progress + arc;
+
+        // Add to trail
+        m.trail.push([mx, my]);
+        if (m.trail.length > 20) m.trail.shift();
+
+        if (m.progress >= 1) {
+          m.exploding = 0.01;
+          continue;
+        }
+
+        // Draw smoke trail
+        ctx.strokeStyle = "rgba(200,200,200,0.15)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        m.trail.forEach(([tx, ty], idx) => {
+          if (idx === 0) ctx.moveTo(tx, ty);
+          else ctx.lineTo(tx, ty);
+        });
+        ctx.stroke();
+
+        // Draw flame trail
+        if (m.trail.length > 2) {
+          const trailGrad = ctx.createLinearGradient(
+            m.trail[Math.max(0, m.trail.length - 8)][0],
+            m.trail[Math.max(0, m.trail.length - 8)][1],
+            mx, my
+          );
+          trailGrad.addColorStop(0, "rgba(255,100,20,0)");
+          trailGrad.addColorStop(1, "rgba(255,180,50,0.5)");
+          ctx.strokeStyle = trailGrad;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          const start = Math.max(0, m.trail.length - 8);
+          for (let j = start; j < m.trail.length; j++) {
+            if (j === start) ctx.moveTo(m.trail[j][0], m.trail[j][1]);
+            else ctx.lineTo(m.trail[j][0], m.trail[j][1]);
+          }
+          ctx.stroke();
+        }
+
+        // Draw missile body
+        const angle = Math.atan2(
+          m.endY - m.startY + Math.cos(m.progress * Math.PI) * 40 * Math.PI,
+          m.endX - m.startX
+        );
+        ctx.save();
+        ctx.translate(mx, my);
+        ctx.rotate(angle);
+        // Body
+        ctx.fillStyle = m.fromNorth ? "rgba(180,180,180,0.9)" : "rgba(160,170,160,0.9)";
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-4, -2);
+        ctx.lineTo(-4, 2);
+        ctx.closePath();
+        ctx.fill();
+        // Nose glow
+        ctx.fillStyle = "rgba(255,200,100,0.8)";
+        ctx.beginPath();
+        ctx.arc(5, 0, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+        // Fins
+        ctx.fillStyle = "rgba(120,120,120,0.7)";
+        ctx.beginPath();
+        ctx.moveTo(-4, -2);
+        ctx.lineTo(-7, -5);
+        ctx.lineTo(-5, -2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(-4, 2);
+        ctx.lineTo(-7, 5);
+        ctx.lineTo(-5, 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Subtle light caustic effect on water
+      const caustT = t * 0.3;
+      for (let i = 0; i < 8; i++) {
+        const cx = (w * 0.2 + Math.sin(caustT + i * 1.7) * w * 0.3 + w * 0.3 * (i / 8)) % w;
+        const cy = (h * 0.3 + Math.cos(caustT * 0.7 + i * 2.1) * h * 0.2) % h;
+        const lon = MAP_BOUNDS.minLon + (cx / w) * (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon);
+        const lat = MAP_BOUNDS.maxLat - (cy / h) * (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat);
+        if (!isLandCell(lon, lat)) {
+          const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, 20 + Math.sin(t + i) * 10);
+          grad.addColorStop(0, "rgba(180,230,255,0.06)");
+          grad.addColorStop(1, "rgba(180,230,255,0)");
+          ctx.fillStyle = grad;
+          ctx.fillRect(cx - 30, cy - 30, 60, 60);
+        }
+      }
+
+      animFrameRef.current = requestAnimationFrame(animate);
+    }
+
+    animFrameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animFrameRef.current);
   }, [rows, cols]);
 
   // Timer
@@ -528,11 +853,36 @@ export default function HormuzMinesweeper() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [status]);
 
+  // Oil price rises $1 every 5 seconds while playing — lose at $200
+  useEffect(() => {
+    if (status === "playing") {
+      oilTimerRef.current = setInterval(() => {
+        setOilPrice(p => {
+          const next = p + 1;
+          if (next >= 200) {
+            setStatus("lost");
+            // Reveal all mines
+            setBoard(prev => prev ? prev.map(row => row.map(cl => ({
+              ...cl,
+              revealed: cl.mine ? true : cl.revealed,
+            }))) : null);
+          }
+          return Math.min(next, 200);
+        });
+      }, 5000);
+    } else {
+      if (oilTimerRef.current) clearInterval(oilTimerRef.current);
+    }
+    return () => { if (oilTimerRef.current) clearInterval(oilTimerRef.current); };
+  }, [status]);
+
   const resetGame = useCallback(() => {
     setBoard(null);
     setStatus("idle");
     setFlagCount(0);
     setTime(0);
+    setOilPrice(50);
+    setExplosions([]);
   }, []);
 
   const handleCellClick = useCallback((r: number, c: number) => {
@@ -559,6 +909,21 @@ export default function HormuzMinesweeper() {
       newBoard[r][c] = { ...newBoard[r][c], revealed: true };
       setBoard(newBoard);
       setStatus("lost");
+      // Trigger chain explosions on all mines with staggered timing
+      const now = Date.now();
+      const mineExplosions: {r: number; c: number; startTime: number}[] = [];
+      // First the clicked mine
+      mineExplosions.push({ r, c, startTime: now });
+      // Then all other mines with delays
+      for (let mr = 0; mr < rows; mr++) {
+        for (let mc = 0; mc < cols; mc++) {
+          if (newBoard[mr][mc].mine && (mr !== r || mc !== c)) {
+            const dist = Math.sqrt((mr - r) ** 2 + (mc - c) ** 2);
+            mineExplosions.push({ r: mr, c: mc, startTime: now + dist * 80 });
+          }
+        }
+      }
+      setExplosions(mineExplosions);
       return;
     }
 
@@ -637,6 +1002,8 @@ export default function HormuzMinesweeper() {
     setStatus("idle");
     setFlagCount(0);
     setTime(0);
+    setOilPrice(50);
+    setExplosions([]);
   };
 
   const cellSize = 28;
@@ -655,9 +1022,63 @@ export default function HormuzMinesweeper() {
       <AdBanner slot="1234567890" style={{ marginBottom: "12px", maxWidth: gridW }} />
 
       {/* Title */}
-      <h1 style={{ color: "#e0d5b0", fontFamily: "serif", fontSize: "24px", marginBottom: "8px", textShadow: "2px 2px 4px rgba(0,0,0,0.5)", letterSpacing: "2px" }}>
+      <h1 style={{ color: "#e0d5b0", fontFamily: "serif", fontSize: "22px", marginBottom: "4px", textShadow: "2px 2px 4px rgba(0,0,0,0.5)", letterSpacing: "2px" }}>
         ⚓ MINESWEEPER: STRAIT OF HORMUZ ⚓
       </h1>
+      <div style={{
+        color: oilPrice > 150 ? "#ff4444" : oilPrice > 100 ? "#ffaa44" : "#ff6644",
+        fontFamily: "'Courier New', monospace",
+        fontSize: "14px",
+        fontWeight: "bold",
+        marginBottom: "4px",
+        textShadow: "0 0 8px rgba(255,50,0,0.4)",
+        animation: oilPrice > 150 ? "pulse 0.5s infinite" : "none",
+        letterSpacing: "1px",
+      }}>
+        ⚠️ CLEAR THE STRAIT BEFORE THE WORLD ECONOMY COLLAPSES!!! ⚠️
+      </div>
+      <style>{`@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } } @keyframes explode { 0% { transform: scale(1); opacity: 1; } 30% { transform: scale(1.8); background: rgba(255,200,50,0.9); } 60% { transform: scale(2.5); background: rgba(255,80,0,0.7); } 100% { transform: scale(3); opacity: 0; } }`}</style>
+
+      {/* Oil Price Meter */}
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        gap: "8px",
+        marginBottom: "6px",
+        padding: "4px 16px",
+        background: "rgba(0,0,0,0.3)",
+        borderRadius: "4px",
+        border: `1px solid ${oilPrice > 150 ? "#ff4444" : oilPrice > 100 ? "#ff8844" : "#446688"}`,
+      }}>
+        <span style={{ color: "#aabbcc", fontSize: "12px", fontFamily: "monospace" }}>🛢️ OIL</span>
+        <div style={{
+          width: "200px",
+          height: "14px",
+          background: "#1a1a2e",
+          borderRadius: "3px",
+          overflow: "hidden",
+          border: "1px solid #333",
+        }}>
+          <div style={{
+            width: `${((oilPrice - 50) / 150) * 100}%`,
+            height: "100%",
+            background: oilPrice > 150 ? "#ff3333" : oilPrice > 100 ? `linear-gradient(90deg, #ff8800, #ff4400)` : `linear-gradient(90deg, #44aa44, #aaaa00)`,
+            transition: "width 0.5s ease, background 0.5s ease",
+            borderRadius: "2px",
+          }} />
+        </div>
+        <span style={{
+          color: oilPrice > 150 ? "#ff4444" : oilPrice > 100 ? "#ffaa44" : "#44cc44",
+          fontSize: "16px",
+          fontWeight: "bold",
+          fontFamily: "'Courier New', monospace",
+          minWidth: "80px",
+          textAlign: "right",
+        }}>
+          ${oilPrice}/bbl
+        </span>
+        {oilPrice >= 200 && <span style={{ color: "#ff4444", fontSize: "12px" }}>💥 CRASHED!</span>}
+      </div>
 
       {/* Difficulty selector */}
       <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
@@ -759,7 +1180,7 @@ export default function HormuzMinesweeper() {
           borderRadius: "2px",
           border: "3px inset #666",
         }}>
-          {/* Map background */}
+          {/* Map background (static) */}
           {mapDataRef.current && (
             <img
               src={mapDataRef.current}
@@ -767,9 +1188,14 @@ export default function HormuzMinesweeper() {
               style={{ position: "absolute", top: 0, left: 0, width: gridW, height: gridH, opacity: 0.6, pointerEvents: "none" }}
             />
           )}
+          {/* Animated water overlay */}
+          <canvas
+            ref={animCanvasRef}
+            style={{ position: "absolute", top: 0, left: 0, width: gridW, height: gridH, pointerEvents: "none", zIndex: 1 }}
+          />
 
           {/* Cells */}
-          <div style={{ position: "relative", display: "grid", gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`, gridTemplateRows: `repeat(${rows}, ${cellSize}px)` }}>
+          <div style={{ position: "relative", zIndex: 2, display: "grid", gridTemplateColumns: `repeat(${cols}, ${cellSize}px)`, gridTemplateRows: `repeat(${rows}, ${cellSize}px)` }}>
             {Array.from({ length: rows }, (_, r) =>
               Array.from({ length: cols }, (_, c) => {
                 const cell = board ? board[r][c] : null;
@@ -779,6 +1205,8 @@ export default function HormuzMinesweeper() {
                 const isMine = cell?.mine ?? false;
                 const adj = cell?.adjacentMines ?? 0;
                 const isExploded = isRevealed && isMine && status === "lost";
+                const explosion = explosions.find(e => e.r === r && e.c === c);
+                const isExploding = explosion && Date.now() >= explosion.startTime;
 
                 if (isLand) {
                   return (
@@ -825,7 +1253,19 @@ export default function HormuzMinesweeper() {
                     }}
                   >
                     {isFlagged && !isRevealed && "🚩"}
-                    {isRevealed && isMine && "💣"}
+                    {isExploding && isExploded && (
+                      <div style={{
+                        position: "absolute",
+                        width: cellSize * 3,
+                        height: cellSize * 3,
+                        borderRadius: "50%",
+                        animation: "explode 0.8s ease-out forwards",
+                        background: "radial-gradient(circle, rgba(255,255,200,0.9) 0%, rgba(255,120,0,0.8) 40%, rgba(255,50,0,0.4) 70%, transparent 100%)",
+                        pointerEvents: "none",
+                        zIndex: 10,
+                      }} />
+                    )}
+                    {isRevealed && isMine && (isExploding ? "💥" : "💣")}
                     {isRevealed && !isMine && adj > 0 && adj}
                   </div>
                 );
@@ -849,8 +1289,10 @@ export default function HormuzMinesweeper() {
             letterSpacing: "1px",
           }}>
             {status === "won"
-              ? "🎖️ STRAIT SECURED — ALL MINES CLEARED!"
-              : "💥 MINE DETONATED — STRAIT COMPROMISED!"}
+              ? "🎖️ STRAIT SECURED — ALL MINES CLEARED! OIL MARKETS STABILIZED!"
+              : oilPrice >= 200
+                ? "📉 OIL HIT $200/BBL — GLOBAL ECONOMY COLLAPSED!"
+                : "💥 MINE DETONATED — STRAIT COMPROMISED!"}
           </div>
         )}
       </div>
