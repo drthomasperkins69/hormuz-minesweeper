@@ -176,7 +176,7 @@ function pointInPolygon(lon: number, lat: number, polygon: [number, number][]): 
 function isLandCell(lon: number, lat: number): boolean {
   if (pointInPolygon(lon, lat, iranCoast)) return true;
   if (pointInPolygon(lon, lat, arabCoast)) return true;
-  if (pointInPolygon(lon, lat, qeshm)) return true;
+  // Qeshm island removed for more gameplay water
   if (pointInPolygon(lon, lat, larakIsland)) return true;
   if (pointInPolygon(lon, lat, greaterTunb)) return true;
   if (pointInPolygon(lon, lat, lesserTunb)) return true;
@@ -249,7 +249,7 @@ function drawMap(ctx: CanvasRenderingContext2D, w: number, h: number) {
 
   // Islands
   ctx.fillStyle = "#bfae72";
-  drawCoastline(ctx, qeshm, w, h);
+  // Qeshm island removed for gameplay
   ctx.fillStyle = "#bfae72";
   drawCoastline(ctx, larakIsland, w, h);
   drawCoastline(ctx, greaterTunb, w, h);
@@ -299,7 +299,7 @@ function drawMap(ctx: CanvasRenderingContext2D, w: number, h: number) {
   // Island names
   ctx.font = `${Math.max(9, Math.floor(w * 0.013))}px 'Georgia', serif`;
   ctx.fillStyle = "#e8d8a0";
-  ctx.fillText("Qeshm", lonToX(55.65, w), latToY(26.42, h));
+  // Qeshm label removed
   ctx.fillText("Hormuz", lonToX(56.42, w), latToY(26.46, h));
   ctx.fillText("Larak", lonToX(56.28, w), latToY(26.52, h));
   ctx.fillText("Hengam", lonToX(55.85, w), latToY(26.37, h));
