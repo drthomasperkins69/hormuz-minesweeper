@@ -465,7 +465,7 @@ function AdBanner({ slot, style }: { slot: string; style?: React.CSSProperties }
       <ins
         className="adsbygoogle"
         style={{ display: "block" }}
-        data-ad-client="ca-pub-XXXXXXXXXXXXXXXX"
+        data-ad-client="ca-pub-3169922418917282"
         data-ad-slot={slot}
         data-ad-format="auto"
         data-full-width-responsive="true"
