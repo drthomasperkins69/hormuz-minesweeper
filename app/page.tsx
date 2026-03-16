@@ -865,6 +865,11 @@ export default function HormuzMinesweeper() {
 
       {/* Bottom Ad */}
       <AdBanner slot="0987654321" style={{ marginTop: "16px", maxWidth: gridW }} />
+
+      {/* Credit */}
+      <div style={{ color: "#556677", fontSize: "12px", marginTop: "16px", fontFamily: "serif", letterSpacing: "1px" }}>
+        Made by Thomas Perkins
+      </div>
     </div>
   );
 }
