@@ -63,18 +63,18 @@ const iranCoast: [number, number][] = [
   [56.0, 26.55],
   [56.05, 26.54],
   [56.1, 26.53],
-  [56.15, 26.50],
-  [56.2, 26.47],
-  [56.25, 26.43],
-  [56.3, 26.38],
-  [56.35, 26.35],
-  [56.4, 26.32],
-  [56.45, 26.30],
-  [56.5, 26.28],
-  [56.55, 26.26],
-  [56.6, 26.24],
-  [56.65, 26.22],
-  [56.7, 26.20],
+  [56.15, 26.53],
+  [56.2, 26.51],
+  [56.25, 26.48],
+  [56.3, 26.44],
+  [56.35, 26.41],
+  [56.4, 26.38],
+  [56.45, 26.35],
+  [56.5, 26.33],
+  [56.55, 26.30],
+  [56.6, 26.28],
+  [56.65, 26.25],
+  [56.7, 26.23],
   [56.8, 26.18],
   [56.9, 26.15],
   [57.0, 26.12],
@@ -96,18 +96,18 @@ const arabCoast: [number, number][] = [
   [55.85, 26.08],
   [55.9, 26.10],
   [55.95, 26.12],
-  [56.0, 26.14],
-  [56.05, 26.18],
-  [56.1, 26.22],
-  [56.15, 26.26],
-  [56.18, 26.28],
-  [56.2, 26.30],
-  [56.25, 26.32],
-  [56.28, 26.30],
-  [56.3, 26.27],
-  [56.32, 26.24],
-  [56.34, 26.20],
-  [56.35, 26.16],
+  [56.0, 26.10],
+  [56.05, 26.13],
+  [56.1, 26.16],
+  [56.15, 26.19],
+  [56.18, 26.21],
+  [56.2, 26.23],
+  [56.25, 26.25],
+  [56.28, 26.23],
+  [56.3, 26.20],
+  [56.32, 26.17],
+  [56.34, 26.14],
+  [56.35, 26.10],
   [56.36, 26.12],
   [56.37, 26.08],
   [56.38, 26.04],
@@ -177,9 +177,7 @@ function isLandCell(lon: number, lat: number): boolean {
   if (pointInPolygon(lon, lat, iranCoast)) return true;
   if (pointInPolygon(lon, lat, arabCoast)) return true;
   if (pointInPolygon(lon, lat, qeshm)) return true;
-  if (pointInPolygon(lon, lat, hormuzIsland)) return true;
   if (pointInPolygon(lon, lat, larakIsland)) return true;
-  if (pointInPolygon(lon, lat, hengamIsland)) return true;
   if (pointInPolygon(lon, lat, greaterTunb)) return true;
   if (pointInPolygon(lon, lat, lesserTunb)) return true;
   return false;
@@ -252,11 +250,8 @@ function drawMap(ctx: CanvasRenderingContext2D, w: number, h: number) {
   // Islands
   ctx.fillStyle = "#bfae72";
   drawCoastline(ctx, qeshm, w, h);
-  ctx.fillStyle = "#d4a574";
-  drawCoastline(ctx, hormuzIsland, w, h);
   ctx.fillStyle = "#bfae72";
   drawCoastline(ctx, larakIsland, w, h);
-  drawCoastline(ctx, hengamIsland, w, h);
   drawCoastline(ctx, greaterTunb, w, h);
   drawCoastline(ctx, lesserTunb, w, h);
 
@@ -440,16 +435,14 @@ function reveal(board: CellState[][], r: number, c: number, rows: number, cols: 
   return newBoard;
 }
 
-function checkWin(board: CellState[][], rows: number, cols: number, totalMines: number): boolean {
-  let revealedCount = 0;
-  let landCount = 0;
+function checkWin(board: CellState[][], rows: number, cols: number, _totalMines: number): boolean {
+  // Win when all water cells are revealed (mines get destroyed when hit, so we just check for unrevealed water)
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      if (board[r][c].isLand) landCount++;
-      else if (board[r][c].revealed) revealedCount++;
+      if (!board[r][c].isLand && !board[r][c].revealed) return false;
     }
   }
-  return revealedCount === (rows * cols - landCount - totalMines);
+  return true;
 }
 
 // --- AdSense Component ---
@@ -489,12 +482,49 @@ export default function HormuzMinesweeper() {
   const [time, setTime] = useState(0);
   const [oilPrice, setOilPrice] = useState(50);
   const [explosions, setExplosions] = useState<{r: number; c: number; startTime: number}[]>([]);
+  const [tankersBlownUp, setTankersBlownUp] = useState(0);
+  const [showNameInput, setShowNameInput] = useState(false);
+  const [playerName, setPlayerName] = useState("");
+  const [leaderboard, setLeaderboard] = useState<{winners: any[]; losers: any[]}>({ winners: [], losers: [] });
+  const [submittingScore, setSubmittingScore] = useState(false);
+  const [scoreSubmitted, setScoreSubmitted] = useState(false);
+  const [eventPopup, setEventPopup] = useState<{ title: string; message: string; icon: string } | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const oilTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mapDataRef = useRef<string | null>(null);
   const animCanvasRef = useRef<HTMLCanvasElement>(null);
   const animFrameRef = useRef<number>(0);
+  const boardRef = useRef<CellState[][] | null>(null);
+  const tankersBlownUpRef = useRef(0);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+
+  // Detect mobile
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 768);
+    check();
+    window.addEventListener('resize', check);
+    return () => window.removeEventListener('resize', check);
+  }, []);
+
+  // Keep refs in sync for animation loop access
+  useEffect(() => { boardRef.current = board; }, [board]);
+  useEffect(() => { tankersBlownUpRef.current = tankersBlownUp; }, [tankersBlownUp]);
+
+  // Fetch leaderboard on mount and after score submission
+  const fetchLeaderboard = useCallback(async () => {
+    try {
+      const res = await fetch("/api/scores");
+      if (res.ok) {
+        const data = await res.json();
+        setLeaderboard(data);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchLeaderboard(); }, [fetchLeaderboard]);
 
   // Pre-compute land mask
   const landMask = useMemo(() => buildLandMask(rows, cols), [rows, cols]);
@@ -538,14 +568,14 @@ export default function HormuzMinesweeper() {
     const ctx = canvas.getContext("2d")!;
 
     // Ship state: each ship travels along a shipping lane path
-    type Ship = { progress: number; speed: number; lane: number; size: number; };
+    type Ship = { progress: number; speed: number; lane: number; size: number; alive: boolean; explodeTimer: number; explodeX: number; explodeY: number; respawnTimer: number; };
     const ships: Ship[] = [
-      { progress: 0, speed: 0.0004, lane: 0, size: 1.0 },
-      { progress: 0.35, speed: 0.0003, lane: 0, size: 0.8 },
-      { progress: 0.7, speed: 0.00035, lane: 0, size: 0.9 },
-      { progress: 0.1, speed: 0.00045, lane: 1, size: 1.0 },
-      { progress: 0.55, speed: 0.00032, lane: 1, size: 0.85 },
-      { progress: 0.85, speed: 0.0004, lane: 1, size: 0.75 },
+      { progress: 0, speed: 0.0004, lane: 0, size: 1.0, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.35, speed: 0.0003, lane: 0, size: 0.8, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.7, speed: 0.00035, lane: 0, size: 0.9, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.1, speed: 0.00045, lane: 1, size: 1.0, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.55, speed: 0.00032, lane: 1, size: 0.85, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
+      { progress: 0.85, speed: 0.0004, lane: 1, size: 0.75, alive: true, explodeTimer: 0, explodeX: 0, explodeY: 0, respawnTimer: 0 },
     ];
 
     // Shipping lane waypoints
@@ -598,47 +628,48 @@ export default function HormuzMinesweeper() {
       ctx.restore();
     }
 
-    // Missile state
+    // Missile state — Iran fires at oil tankers
     type Missile = {
       startX: number; startY: number;
       endX: number; endY: number;
       progress: number; speed: number;
-      fromNorth: boolean; // true = Iran firing south, false = south firing north
+      targetShipIdx: number; // index of ship being targeted
+      willHit: boolean; // 5% chance
       trail: [number, number][];
       exploding: number; // 0 = flying, >0 = explosion timer
     };
     const missiles: Missile[] = [];
     let lastMissileTime = 0;
 
-    // Launch points: Iran coast (north) and Arab coast (south)
+    // Iran launch points (north coast)
     const iranLaunchLons = [55.4, 55.7, 56.0, 56.3, 55.5, 55.9];
-    const arabLaunchLons = [55.5, 55.8, 56.1, 55.6, 55.9, 56.0];
 
     function spawnMissile(t: number) {
-      const fromNorth = Math.random() > 0.5;
-      if (fromNorth) {
-        const lon = iranLaunchLons[Math.floor(Math.random() * iranLaunchLons.length)];
-        const startLat = 26.55 + Math.random() * 0.05;
-        const endLon = lon + (Math.random() - 0.5) * 0.4;
-        const endLat = 25.95 + Math.random() * 0.15;
-        missiles.push({
-          startX: lonToX(lon, w), startY: latToY(startLat, h),
-          endX: lonToX(endLon, w), endY: latToY(endLat, h),
-          progress: 0, speed: 0.008 + Math.random() * 0.006,
-          fromNorth: true, trail: [], exploding: 0,
-        });
-      } else {
-        const lon = arabLaunchLons[Math.floor(Math.random() * arabLaunchLons.length)];
-        const startLat = 26.0 + Math.random() * 0.1;
-        const endLon = lon + (Math.random() - 0.5) * 0.4;
-        const endLat = 26.50 + Math.random() * 0.1;
-        missiles.push({
-          startX: lonToX(lon, w), startY: latToY(startLat, h),
-          endX: lonToX(endLon, w), endY: latToY(endLat, h),
-          progress: 0, speed: 0.008 + Math.random() * 0.006,
-          fromNorth: false, trail: [], exploding: 0,
-        });
-      }
+      // Only fire from Iran, targeting a random alive ship
+      const aliveShips = ships.map((s, i) => ({ s, i })).filter(x => x.s.alive);
+      if (aliveShips.length === 0) return;
+
+      const target = aliveShips[Math.floor(Math.random() * aliveShips.length)];
+      const lon = iranLaunchLons[Math.floor(Math.random() * iranLaunchLons.length)];
+      const startLat = 26.55 + Math.random() * 0.05;
+      const willHit = Math.random() < 0.05; // 5% chance of hitting
+
+      // Get target ship's current position for aiming
+      const targetShip = target.s;
+      const lane = lanes[targetShip.lane];
+      const [tx, ty] = getLanePos(lane, targetShip.progress);
+
+      // If not going to hit, add random offset to miss
+      const missOffset = willHit ? 0 : (30 + Math.random() * 60) * (Math.random() > 0.5 ? 1 : -1);
+
+      missiles.push({
+        startX: lonToX(lon, w), startY: latToY(startLat, h),
+        endX: tx + missOffset, endY: ty + (willHit ? 0 : missOffset * 0.5),
+        progress: 0, speed: 0.008 + Math.random() * 0.006,
+        targetShipIdx: target.i,
+        willHit,
+        trail: [], exploding: 0,
+      });
     }
 
     let startTime = performance.now();
@@ -680,12 +711,96 @@ export default function HormuzMinesweeper() {
         ctx.stroke();
       }
 
-      // Draw ships
+      // Draw ships with mine collision detection
+      const cs = 28;
       for (const ship of ships) {
+        // Handle explosion animation
+        if (!ship.alive) {
+          if (ship.explodeTimer > 0 && ship.explodeTimer < 1) {
+            ship.explodeTimer += 0.015;
+            const ex = ship.explodeX, ey = ship.explodeY;
+            const r = ship.explodeTimer * 40;
+            const alpha = 1 - ship.explodeTimer;
+            // Big fireball for tanker
+            const fireGrad = ctx.createRadialGradient(ex, ey, 0, ex, ey, r);
+            fireGrad.addColorStop(0, `rgba(255,255,200,${alpha * 0.9})`);
+            fireGrad.addColorStop(0.2, `rgba(255,200,50,${alpha * 0.8})`);
+            fireGrad.addColorStop(0.5, `rgba(255,100,20,${alpha * 0.6})`);
+            fireGrad.addColorStop(1, `rgba(200,30,0,0)`);
+            ctx.fillStyle = fireGrad;
+            ctx.beginPath(); ctx.arc(ex, ey, r, 0, Math.PI * 2); ctx.fill();
+            // Oil slick
+            ctx.fillStyle = `rgba(30,20,10,${alpha * 0.4})`;
+            ctx.beginPath(); ctx.ellipse(ex, ey + r*0.3, r*1.2, r*0.4, 0, 0, Math.PI * 2); ctx.fill();
+            // Smoke
+            for (let s = 0; s < 5; s++) {
+              const smokeY = ey - r * 0.5 - s * 8 * ship.explodeTimer;
+              const smokeR = 5 + s * 3;
+              ctx.fillStyle = `rgba(60,60,60,${alpha * 0.3 * (1 - s * 0.15)})`;
+              ctx.beginPath(); ctx.arc(ex + Math.sin(s + ship.explodeTimer * 5) * 8, smokeY, smokeR, 0, Math.PI * 2); ctx.fill();
+            }
+          } else {
+            // Respawn after explosion
+            ship.respawnTimer += 0.005;
+            if (ship.respawnTimer > 1) {
+              ship.alive = true;
+              ship.progress = 0;
+              ship.explodeTimer = 0;
+              ship.respawnTimer = 0;
+            }
+          }
+          continue;
+        }
+
         ship.progress += ship.speed;
-        if (ship.progress > 1) ship.progress -= 1;
+        if (ship.progress > 1) {
+          ship.progress -= 1;
+          // Tanker completed the strait — lower oil price
+          window.dispatchEvent(new CustomEvent('tankerThrough'));
+        }
         const lane = lanes[ship.lane];
         const [sx, sy, angle] = getLanePos(lane, ship.progress);
+
+        // Check mine collision: convert ship pixel position to grid cell
+        const currentBoard = boardRef.current;
+        if (currentBoard) {
+          const shipCol = Math.floor(sx / cs);
+          const shipRow = Math.floor(sy / cs);
+          if (shipRow >= 0 && shipRow < currentBoard.length && shipCol >= 0 && shipCol < currentBoard[0].length) {
+            const cell = currentBoard[shipRow][shipCol];
+            if (cell.mine && !cell.revealed) {
+              // Tanker hit a mine! Blow up the mine and the tanker
+              ship.alive = false;
+              ship.explodeTimer = 0.01;
+              ship.explodeX = sx;
+              ship.explodeY = sy;
+              ship.respawnTimer = 0;
+              // Remove the mine from the board (good for player!)
+              const newBoard = currentBoard.map(row => row.map(cl => ({ ...cl })));
+              newBoard[shipRow][shipCol].mine = false;
+              newBoard[shipRow][shipCol].revealed = true;
+              // Recalculate adjacent counts around the removed mine
+              for (let dr = -1; dr <= 1; dr++) {
+                for (let dc = -1; dc <= 1; dc++) {
+                  const nr = shipRow + dr, nc = shipCol + dc;
+                  if (nr >= 0 && nr < newBoard.length && nc >= 0 && nc < newBoard[0].length && !newBoard[nr][nc].isLand) {
+                    let count = 0;
+                    for (let ddr = -1; ddr <= 1; ddr++) {
+                      for (let ddc = -1; ddc <= 1; ddc++) {
+                        const nnr = nr + ddr, nnc = nc + ddc;
+                        if (nnr >= 0 && nnr < newBoard.length && nnc >= 0 && nnc < newBoard[0].length && newBoard[nnr][nnc].mine) count++;
+                      }
+                    }
+                    newBoard[nr][nc].adjacentMines = count;
+                  }
+                }
+              }
+              // Use a custom event to update React state from animation loop
+              window.dispatchEvent(new CustomEvent('tankerMineHit', { detail: { board: newBoard } }));
+            }
+          }
+        }
+
         drawShip(ctx, sx, sy, angle, ship.size);
       }
 
@@ -749,6 +864,17 @@ export default function HormuzMinesweeper() {
 
         if (m.progress >= 1) {
           m.exploding = 0.01;
+          // If this missile was going to hit, destroy the target ship
+          if (m.willHit && ships[m.targetShipIdx] && ships[m.targetShipIdx].alive) {
+            const targetShip = ships[m.targetShipIdx];
+            targetShip.alive = false;
+            targetShip.explodeTimer = 0.01;
+            targetShip.explodeX = m.endX;
+            targetShip.explodeY = m.endY;
+            targetShip.respawnTimer = 0;
+            // Dispatch event to update oil price +$10
+            window.dispatchEvent(new CustomEvent('missileHitTanker'));
+          }
           continue;
         }
 
@@ -791,7 +917,7 @@ export default function HormuzMinesweeper() {
         ctx.translate(mx, my);
         ctx.rotate(angle);
         // Body
-        ctx.fillStyle = m.fromNorth ? "rgba(180,180,180,0.9)" : "rgba(160,170,160,0.9)";
+        ctx.fillStyle = "rgba(180,180,180,0.9)";
         ctx.beginPath();
         ctx.moveTo(6, 0);
         ctx.lineTo(-4, -2);
@@ -843,6 +969,89 @@ export default function HormuzMinesweeper() {
     return () => cancelAnimationFrame(animFrameRef.current);
   }, [rows, cols]);
 
+  // Show name input when game ends
+  useEffect(() => {
+    if ((status === "won" || status === "lost") && !scoreSubmitted) {
+      setShowNameInput(true);
+    }
+  }, [status, scoreSubmitted]);
+
+  // Submit score
+  const submitScore = useCallback(async () => {
+    if (!playerName.trim() || submittingScore) return;
+    setSubmittingScore(true);
+    try {
+      // Count mines cleared (revealed non-mine water cells don't count, we want mines that were flagged or removed by tankers)
+      let minesCleared = 0;
+      if (board) {
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (!board[r][c].isLand && board[r][c].revealed && !board[r][c].mine) {
+              // This was a cleared cell
+            }
+            if (!board[r][c].isLand && board[r][c].flagged && board[r][c].mine) {
+              minesCleared++;
+            }
+          }
+        }
+      }
+      // Add tankers blown up mines
+      minesCleared += tankersBlownUp;
+
+      await fetch("/api/scores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: playerName.trim(),
+          time_seconds: time,
+          mines_cleared: minesCleared,
+          total_mines: actualMines,
+          difficulty,
+          won: status === "won",
+          oil_price: oilPrice,
+          tankers_blown_up: tankersBlownUp,
+        }),
+      });
+      setScoreSubmitted(true);
+      setShowNameInput(false);
+      fetchLeaderboard();
+    } catch {}
+    setSubmittingScore(false);
+  }, [playerName, submittingScore, board, rows, cols, time, actualMines, difficulty, status, oilPrice, tankersBlownUp, fetchLeaderboard]);
+
+  // Show event popup helper
+  const showEventPopup = useCallback((title: string, message: string, icon: string) => {
+    setEventPopup({ title, message, icon });
+  }, []);
+
+  // Listen for tanker-mine collision events from animation loop
+  useEffect(() => {
+    const mineHandler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setBoard(detail.board);
+      setTankersBlownUp(prev => prev + 1);
+      setOilPrice(prev => Math.min(prev + 10, 200));
+      // No popup for auto tanker-mine hits (too frequent) — just visual explosion on canvas
+    };
+    const missileHandler = () => {
+      setTankersBlownUp(prev => prev + 1);
+      setOilPrice(prev => Math.min(prev + 10, 200));
+      showEventPopup("MISSILE STRIKE!", "Iran fired an anti-ship missile and hit an oil tanker! Oil surges +$10/bbl!", "🚀");
+    };
+    const tankerThroughHandler = () => {
+      setOilPrice(prev => Math.max(prev - 10, 50));
+      // No popup for deliveries — too frequent. Just a quiet price drop.
+    };
+    window.addEventListener('tankerMineHit', mineHandler);
+    window.addEventListener('missileHitTanker', missileHandler);
+    window.addEventListener('tankerThrough', tankerThroughHandler);
+    return () => {
+      window.removeEventListener('tankerMineHit', mineHandler);
+      window.removeEventListener('missileHitTanker', missileHandler);
+      window.removeEventListener('tankerThrough', tankerThroughHandler);
+    };
+  }, [showEventPopup]);
+
   // Timer
   useEffect(() => {
     if (status === "playing") {
@@ -883,6 +1092,9 @@ export default function HormuzMinesweeper() {
     setTime(0);
     setOilPrice(50);
     setExplosions([]);
+    setTankersBlownUp(0);
+    setShowNameInput(false);
+    setScoreSubmitted(false);
   }, []);
 
   const handleCellClick = useCallback((r: number, c: number) => {
@@ -902,28 +1114,40 @@ export default function HormuzMinesweeper() {
     if (cell.revealed || cell.flagged) return;
 
     if (cell.mine) {
-      const newBoard = board.map(row => row.map(cl => ({
-        ...cl,
-        revealed: cl.mine ? true : cl.revealed,
-      })));
-      newBoard[r][c] = { ...newBoard[r][c], revealed: true };
-      setBoard(newBoard);
-      setStatus("lost");
-      // Trigger chain explosions on all mines with staggered timing
-      const now = Date.now();
-      const mineExplosions: {r: number; c: number; startTime: number}[] = [];
-      // First the clicked mine
-      mineExplosions.push({ r, c, startTime: now });
-      // Then all other mines with delays
-      for (let mr = 0; mr < rows; mr++) {
-        for (let mc = 0; mc < cols; mc++) {
-          if (newBoard[mr][mc].mine && (mr !== r || mc !== c)) {
-            const dist = Math.sqrt((mr - r) ** 2 + (mc - c) ** 2);
-            mineExplosions.push({ r: mr, c: mc, startTime: now + dist * 80 });
+      // Mine explodes but game continues — just that mine is destroyed, oil +$10
+      const newBoard = board.map(row => row.map(cl => ({ ...cl })));
+      newBoard[r][c] = { ...newBoard[r][c], mine: false, revealed: true };
+      // Recalculate adjacents around the destroyed mine
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !newBoard[nr][nc].isLand) {
+            let count = 0;
+            for (let ddr = -1; ddr <= 1; ddr++) {
+              for (let ddc = -1; ddc <= 1; ddc++) {
+                const nnr = nr + ddr, nnc = nc + ddc;
+                if (nnr >= 0 && nnr < rows && nnc >= 0 && nnc < cols && newBoard[nnr][nnc].mine) count++;
+              }
+            }
+            newBoard[nr][nc].adjacentMines = count;
           }
         }
       }
-      setExplosions(mineExplosions);
+      setBoard(newBoard);
+      // Single mine explosion animation
+      setExplosions([{ r, c, startTime: Date.now() }]);
+      // Oil price jumps +$10
+      setOilPrice(prev => {
+        const next = Math.min(prev + 10, 200);
+        if (next >= 200) {
+          setStatus("lost");
+        }
+        return next;
+      });
+      // Show popup
+      setEventPopup({ title: "MINE DETONATED!", message: "You hit a sea mine! It has been destroyed but oil prices surge +$10/bbl!", icon: "💣" });
+      // Check win (mine was removed, so fewer mines to avoid now)
+      if (checkWin(newBoard, rows, cols, actualMines)) setStatus("won");
       return;
     }
 
@@ -950,7 +1174,7 @@ export default function HormuzMinesweeper() {
     if (flaggedNeighbors !== cell.adjacentMines) return;
 
     let newBoard = board.map(row => row.map(cl => ({ ...cl })));
-    let hitMine = false;
+    const hitMines: [number, number][] = [];
 
     for (let dr = -1; dr <= 1; dr++) {
       for (let dc = -1; dc <= 1; dc++) {
@@ -959,7 +1183,9 @@ export default function HormuzMinesweeper() {
           const neighbor = newBoard[nr][nc];
           if (!neighbor.revealed && !neighbor.flagged && !neighbor.isLand) {
             if (neighbor.mine) {
-              hitMine = true;
+              hitMines.push([nr, nc]);
+              // Mine explodes but doesn't end game — destroy it
+              newBoard[nr][nc].mine = false;
               newBoard[nr][nc].revealed = true;
             } else {
               newBoard = reveal(newBoard, nr, nc, rows, cols);
@@ -969,13 +1195,34 @@ export default function HormuzMinesweeper() {
       }
     }
 
-    if (hitMine) {
-      newBoard = newBoard.map(row => row.map(cl => ({
-        ...cl,
-        revealed: cl.mine ? true : cl.revealed,
-      })));
+    if (hitMines.length > 0) {
+      // Recalculate adjacents for affected areas
+      for (const [mr, mc] of hitMines) {
+        for (let dr2 = -1; dr2 <= 1; dr2++) {
+          for (let dc2 = -1; dc2 <= 1; dc2++) {
+            const nr2 = mr + dr2, nc2 = mc + dc2;
+            if (nr2 >= 0 && nr2 < rows && nc2 >= 0 && nc2 < cols && !newBoard[nr2][nc2].isLand) {
+              let cnt = 0;
+              for (let ddr = -1; ddr <= 1; ddr++) {
+                for (let ddc = -1; ddc <= 1; ddc++) {
+                  const nnr = nr2 + ddr, nnc = nc2 + ddc;
+                  if (nnr >= 0 && nnr < rows && nnc >= 0 && nnc < cols && newBoard[nnr][nnc].mine) cnt++;
+                }
+              }
+              newBoard[nr2][nc2].adjacentMines = cnt;
+            }
+          }
+        }
+      }
+      setExplosions(hitMines.map(([mr, mc]) => ({ r: mr, c: mc, startTime: Date.now() })));
+      setOilPrice(prev => {
+        const next = Math.min(prev + hitMines.length * 10, 200);
+        if (next >= 200) setStatus("lost");
+        return next;
+      });
+      setEventPopup({ title: "MINES DETONATED!", message: `${hitMines.length} mine${hitMines.length > 1 ? "s" : ""} exploded! Oil surges +$${hitMines.length * 10}/bbl!`, icon: "💣" });
       setBoard(newBoard);
-      setStatus("lost");
+      if (checkWin(newBoard, rows, cols, actualMines)) setStatus("won");
     } else {
       setBoard(newBoard);
       if (checkWin(newBoard, rows, cols, actualMines)) setStatus("won");
@@ -1004,9 +1251,48 @@ export default function HormuzMinesweeper() {
     setTime(0);
     setOilPrice(50);
     setExplosions([]);
+    setTankersBlownUp(0);
+    setShowNameInput(false);
+    setScoreSubmitted(false);
   };
 
-  const cellSize = 28;
+  // Mobile touch: long press to flag/unflag
+  const handleTouchStart = useCallback((r: number, c: number) => {
+    longPressTriggeredRef.current = false;
+    longPressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      // Toggle flag (same as right-click)
+      if (status === "won" || status === "lost") return;
+      if (!board) return;
+      if (landMask[r][c]) return;
+      const cell = board[r][c];
+      if (cell.revealed) return;
+      const newBoard = board.map(row => row.map(cl => ({ ...cl })));
+      newBoard[r][c].flagged = !cell.flagged;
+      setBoard(newBoard);
+      setFlagCount(f => cell.flagged ? f - 1 : f + 1);
+    }, 400);
+  }, [board, status, landMask]);
+
+  const handleTouchEnd = useCallback((r: number, c: number) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (!longPressTriggeredRef.current) {
+      // Short tap = reveal
+      handleCellClick(r, c);
+    }
+  }, [handleCellClick]);
+
+  const handleTouchCancel = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const cellSize = isMobile ? Math.floor((typeof window !== 'undefined' ? Math.min(window.innerWidth - 20, 400) : 400) / cols) : 28;
   const gridW = cols * cellSize;
   const gridH = rows * cellSize;
 
@@ -1022,18 +1308,22 @@ export default function HormuzMinesweeper() {
       <AdBanner slot="1234567890" style={{ marginBottom: "12px", maxWidth: gridW }} />
 
       {/* Title */}
-      <h1 style={{ color: "#e0d5b0", fontFamily: "serif", fontSize: "22px", marginBottom: "4px", textShadow: "2px 2px 4px rgba(0,0,0,0.5)", letterSpacing: "2px" }}>
+      <h1 style={{ color: "#e0d5b0", fontFamily: "serif", fontSize: isMobile ? "16px" : "22px", marginBottom: "4px", textShadow: "2px 2px 4px rgba(0,0,0,0.5)", letterSpacing: "2px", textAlign: "center" }}>
         ⚓ MINESWEEPER: STRAIT OF HORMUZ ⚓
       </h1>
       <div style={{
-        color: oilPrice > 150 ? "#ff4444" : oilPrice > 100 ? "#ffaa44" : "#ff6644",
+        color: oilPrice > 150 ? "#ff2222" : oilPrice > 100 ? "#ff6622" : "#ff4444",
         fontFamily: "'Courier New', monospace",
-        fontSize: "14px",
+        fontSize: isMobile ? "11px" : "20px",
         fontWeight: "bold",
-        marginBottom: "4px",
-        textShadow: "0 0 8px rgba(255,50,0,0.4)",
-        animation: oilPrice > 150 ? "pulse 0.5s infinite" : "none",
-        letterSpacing: "1px",
+        marginBottom: "6px",
+        padding: isMobile ? "4px 10px" : "6px 20px",
+        background: "rgba(255,0,0,0.08)",
+        border: `2px solid ${oilPrice > 150 ? "#ff2222" : oilPrice > 100 ? "#ff6622" : "#ff444466"}`,
+        borderRadius: "6px",
+        textShadow: "0 0 12px rgba(255,50,0,0.6), 0 0 24px rgba(255,0,0,0.3)",
+        animation: oilPrice > 150 ? "pulse 0.5s infinite" : oilPrice > 100 ? "pulse 1s infinite" : "none",
+        letterSpacing: "2px",
       }}>
         ⚠️ CLEAR THE STRAIT BEFORE THE WORLD ECONOMY COLLAPSES!!! ⚠️
       </div>
@@ -1080,28 +1370,17 @@ export default function HormuzMinesweeper() {
         {oilPrice >= 200 && <span style={{ color: "#ff4444", fontSize: "12px" }}>💥 CRASHED!</span>}
       </div>
 
-      {/* Difficulty selector */}
-      <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-        {(["beginner", "intermediate", "expert"] as Difficulty[]).map(d => (
-          <button
-            key={d}
-            onClick={() => changeDifficulty(d)}
-            style={{
-              padding: "4px 14px",
-              background: difficulty === d ? "#5ba3cc" : "#2a3a5e",
-              color: "#fff",
-              border: difficulty === d ? "2px solid #8fd4ff" : "2px solid #3a4a6e",
-              borderRadius: "4px",
-              cursor: "pointer",
-              fontWeight: difficulty === d ? "bold" : "normal",
-              fontSize: "13px",
-              textTransform: "capitalize",
-            }}
-          >
-            {d}
-          </button>
-        ))}
+      {/* Difficulty hidden — expert only */}
+
+      {/* Game area with side ads */}
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "center" : "flex-start", gap: isMobile ? "8px" : "16px" }}>
+
+      {/* Left side ad (hidden on mobile) */}
+      {!isMobile && (
+      <div style={{ width: "160px", minHeight: "600px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
+        <AdBanner slot="1111111111" style={{ width: 160, minHeight: 600 }} />
       </div>
+      )}
 
       {/* Game frame */}
       <div style={{
@@ -1229,6 +1508,9 @@ export default function HormuzMinesweeper() {
                     onClick={() => handleCellClick(r, c)}
                     onDoubleClick={() => handleChord(r, c)}
                     onContextMenu={(e) => handleRightClick(e, r, c)}
+                    onTouchStart={(e) => { e.preventDefault(); handleTouchStart(r, c); }}
+                    onTouchEnd={(e) => { e.preventDefault(); handleTouchEnd(r, c); }}
+                    onTouchCancel={handleTouchCancel}
                     style={{
                       width: cellSize,
                       height: cellSize,
@@ -1290,20 +1572,340 @@ export default function HormuzMinesweeper() {
           }}>
             {status === "won"
               ? "🎖️ STRAIT SECURED — ALL MINES CLEARED! OIL MARKETS STABILIZED!"
-              : oilPrice >= 200
-                ? "📉 OIL HIT $200/BBL — GLOBAL ECONOMY COLLAPSED!"
-                : "💥 MINE DETONATED — STRAIT COMPROMISED!"}
+              : "📉 OIL HIT $200/BBL — GLOBAL ECONOMY COLLAPSED!"}
+            {tankersBlownUp > 0 && (
+              <div style={{ fontSize: "13px", marginTop: "4px", color: "#ffaa44" }}>
+                🚢 {tankersBlownUp} tanker{tankersBlownUp > 1 ? "s" : ""} destroyed by mines
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tankers blown up counter (during play) */}
+        {status === "playing" && tankersBlownUp > 0 && (
+          <div style={{ textAlign: "center", padding: "4px", marginTop: "4px", color: "#ffaa44", fontSize: "12px", fontFamily: "monospace" }}>
+            🚢 Tankers lost: {tankersBlownUp} (+${tankersBlownUp * 10}/bbl)
           </div>
         )}
       </div>
+
+      {/* Right side: Leaderboard & Loserboard */}
+      <div style={{ width: isMobile ? "100%" : "220px", maxWidth: isMobile ? gridW : "220px", minHeight: isMobile ? "auto" : "600px", flexShrink: 0, display: "flex", flexDirection: "column", gap: "8px" }}>
+        {/* Leaderboard */}
+        <div style={{
+          background: "rgba(0,40,20,0.6)",
+          border: "1px solid #2a5a3a",
+          borderRadius: "6px",
+          padding: "8px",
+          maxHeight: "290px",
+          overflow: "auto",
+        }}>
+          <div style={{ color: "#4ade80", fontWeight: "bold", fontSize: "13px", textAlign: "center", marginBottom: "6px", fontFamily: "monospace", letterSpacing: "1px" }}>
+            🏆 LEADERBOARD
+          </div>
+          {leaderboard.winners.length === 0 ? (
+            <div style={{ color: "#556", fontSize: "11px", textAlign: "center", padding: "10px" }}>No winners yet — be the first!</div>
+          ) : (
+            <table style={{ width: "100%", fontSize: "10px", fontFamily: "monospace", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ color: "#6a9" }}>
+                  <th style={{ textAlign: "left", padding: "2px" }}>#</th>
+                  <th style={{ textAlign: "left", padding: "2px" }}>Name</th>
+                  <th style={{ textAlign: "right", padding: "2px" }}>Time</th>
+                  <th style={{ textAlign: "right", padding: "2px" }}>Oil$</th>
+                  <th style={{ textAlign: "center", padding: "2px" }}>🚢</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaderboard.winners.map((s: any, i: number) => (
+                  <tr key={i} style={{ color: i === 0 ? "#ffd700" : i === 1 ? "#c0c0c0" : i === 2 ? "#cd7f32" : "#8a9" }}>
+                    <td style={{ padding: "1px 2px" }}>{i + 1}</td>
+                    <td style={{ padding: "1px 2px", maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.name} <span style={{ fontSize: "8px", color: "#556" }}>{s.country}</span>
+                    </td>
+                    <td style={{ textAlign: "right", padding: "1px 2px" }}>{s.time_seconds}s</td>
+                    <td style={{ textAlign: "right", padding: "1px 2px" }}>${s.oil_price}</td>
+                    <td style={{ textAlign: "center", padding: "1px 2px" }}>{s.tankers_blown_up || 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Loserboard */}
+        <div style={{
+          background: "rgba(40,0,0,0.6)",
+          border: "1px solid #5a2a2a",
+          borderRadius: "6px",
+          padding: "8px",
+          maxHeight: "290px",
+          overflow: "auto",
+        }}>
+          <div style={{ color: "#f87171", fontWeight: "bold", fontSize: "13px", textAlign: "center", marginBottom: "6px", fontFamily: "monospace", letterSpacing: "1px" }}>
+            💀 LOSERBOARD
+          </div>
+          {leaderboard.losers.length === 0 ? (
+            <div style={{ color: "#556", fontSize: "11px", textAlign: "center", padding: "10px" }}>No losers yet — don&apos;t be the first!</div>
+          ) : (
+            <table style={{ width: "100%", fontSize: "10px", fontFamily: "monospace", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ color: "#a66" }}>
+                  <th style={{ textAlign: "left", padding: "2px" }}>#</th>
+                  <th style={{ textAlign: "left", padding: "2px" }}>Name</th>
+                  <th style={{ textAlign: "right", padding: "2px" }}>Time</th>
+                  <th style={{ textAlign: "right", padding: "2px" }}>Oil$</th>
+                  <th style={{ textAlign: "center", padding: "2px" }}>🚢</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leaderboard.losers.map((s: any, i: number) => (
+                  <tr key={i} style={{ color: "#a88" }}>
+                    <td style={{ padding: "1px 2px" }}>{i + 1}</td>
+                    <td style={{ padding: "1px 2px", maxWidth: "80px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.name} <span style={{ fontSize: "8px", color: "#556" }}>{s.country}</span>
+                    </td>
+                    <td style={{ textAlign: "right", padding: "1px 2px" }}>{s.time_seconds}s</td>
+                    <td style={{ textAlign: "right", padding: "1px 2px", color: s.oil_price >= 200 ? "#ff4444" : "#a88" }}>${s.oil_price}</td>
+                    <td style={{ textAlign: "center", padding: "1px 2px" }}>{s.tankers_blown_up || 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Ad below leaderboard */}
+        <AdBanner slot="2222222222" style={{ width: 220, minHeight: 250 }} />
+      </div>
+
+      </div>{/* end flex wrapper */}
+
+      {/* Event popup */}
+      {eventPopup && (
+        <div style={{
+          position: "fixed",
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.5)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 999,
+          cursor: "pointer",
+        }}
+          onClick={() => setEventPopup(null)}
+        >
+          <div style={{
+            background: "linear-gradient(135deg, #1a2a3a 0%, #0a1628 100%)",
+            border: "2px solid #ff884488",
+            borderRadius: "12px",
+            padding: "24px",
+            textAlign: "center",
+            maxWidth: "400px",
+            width: "90%",
+            boxShadow: "0 0 40px rgba(255,100,0,0.3)",
+          }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ fontSize: "48px", marginBottom: "8px" }}>{eventPopup.icon}</div>
+            <div style={{
+              fontSize: "22px",
+              fontWeight: "bold",
+              color: "#ff8844",
+              marginBottom: "8px",
+              fontFamily: "'Courier New', monospace",
+              letterSpacing: "2px",
+              textShadow: "0 0 10px rgba(255,100,0,0.5)",
+            }}>
+              {eventPopup.title}
+            </div>
+            <div style={{ color: "#aabbcc", fontSize: "14px", marginBottom: "16px", lineHeight: "1.5" }}>
+              {eventPopup.message}
+            </div>
+            {/* Ad spot in the popup */}
+            <div style={{
+              background: "rgba(0,0,0,0.3)",
+              border: "1px dashed #33445566",
+              borderRadius: "6px",
+              padding: "8px",
+              marginBottom: "12px",
+              minHeight: "90px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}>
+              <AdBanner slot="3333333333" style={{ width: "100%", minHeight: 90 }} />
+            </div>
+            <button
+              onClick={() => setEventPopup(null)}
+              style={{
+                padding: "8px 24px",
+                background: "#2a4a6a",
+                color: "#fff",
+                border: "1px solid #4a6a8a",
+                borderRadius: "6px",
+                cursor: "pointer",
+                fontWeight: "bold",
+                fontSize: "14px",
+              }}
+            >
+              DISMISS
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Name input modal */}
+      {showNameInput && !scoreSubmitted && (
+        <div style={{
+          position: "fixed",
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.7)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: "#1a2a3a",
+            border: `2px solid ${status === "won" ? "#4ade80" : "#f87171"}`,
+            borderRadius: "12px",
+            padding: "24px",
+            textAlign: "center",
+            maxWidth: "360px",
+            width: "90%",
+          }}>
+            <div style={{
+              fontSize: "20px",
+              fontWeight: "bold",
+              color: status === "won" ? "#4ade80" : "#f87171",
+              marginBottom: "8px",
+              fontFamily: "serif",
+            }}>
+              {status === "won" ? "🎖️ VICTORY!" : "💥 GAME OVER!"}
+            </div>
+            <div style={{ color: "#aabbcc", fontSize: "13px", marginBottom: "4px", fontFamily: "monospace" }}>
+              Time: {time}s | Oil: ${oilPrice}/bbl
+              {tankersBlownUp > 0 && ` | Tankers: ${tankersBlownUp}`}
+            </div>
+            <div style={{ color: "#8899aa", fontSize: "14px", marginBottom: "16px" }}>
+              Enter your name for the {status === "won" ? "leaderboard" : "loserboard"}:
+            </div>
+            <input
+              type="text"
+              maxLength={20}
+              value={playerName}
+              onChange={(e) => setPlayerName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && submitScore()}
+              placeholder="Your name..."
+              style={{
+                width: "100%",
+                padding: "8px 12px",
+                fontSize: "16px",
+                background: "#0a1628",
+                border: "1px solid #446688",
+                borderRadius: "6px",
+                color: "#fff",
+                textAlign: "center",
+                marginBottom: "12px",
+                outline: "none",
+              }}
+              autoFocus
+            />
+            <div style={{ display: "flex", gap: "8px", justifyContent: "center" }}>
+              <button
+                onClick={submitScore}
+                disabled={submittingScore || !playerName.trim()}
+                style={{
+                  padding: "8px 20px",
+                  background: submittingScore ? "#333" : status === "won" ? "#2a7a4a" : "#7a2a2a",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: submittingScore ? "wait" : "pointer",
+                  fontWeight: "bold",
+                  fontSize: "14px",
+                }}
+              >
+                {submittingScore ? "Submitting..." : "Submit Score"}
+              </button>
+              <button
+                onClick={() => setShowNameInput(false)}
+                style={{
+                  padding: "8px 20px",
+                  background: "#333",
+                  color: "#888",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontSize: "14px",
+                }}
+              >
+                Skip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Instructions */}
       <div style={{ color: "#8899aa", fontSize: "12px", marginTop: "8px", textAlign: "center", fontFamily: "monospace" }}>
         Left click: Reveal  •  Right click: Flag  •  Double click number: Chord
       </div>
       <div style={{ color: "#667788", fontSize: "11px", marginTop: "4px", fontFamily: "monospace" }}>
-        Mines are only in the water — land is safe!
+        Mines are only in the water — land is safe! Oil tankers that hit mines will clear them (+$10/bbl)
       </div>
+
+      {/* Share buttons */}
+      <div style={{ display: "flex", gap: "8px", marginTop: "12px", flexWrap: "wrap", justifyContent: "center" }}>
+        <a
+          href="https://www.facebook.com/sharer/sharer.php?u=https://hormuzstraitsweeper.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ padding: "6px 14px", background: "#1877f2", color: "#fff", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", textDecoration: "none", display: "flex", alignItems: "center", gap: "4px" }}
+        >
+          📘 Share on Facebook
+        </a>
+        <a
+          href="fb-messenger://share/?link=https://hormuzstraitsweeper.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ padding: "6px 14px", background: "#0084ff", color: "#fff", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", textDecoration: "none", display: "flex", alignItems: "center", gap: "4px" }}
+        >
+          💬 Messenger
+        </a>
+        <a
+          href="https://api.whatsapp.com/send?text=Can%20you%20clear%20the%20Strait%20of%20Hormuz%20before%20oil%20hits%20%24200%2Fbbl%3F%20Play%20now%3A%20https%3A%2F%2Fhormuzstraitsweeper.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ padding: "6px 14px", background: "#25d366", color: "#fff", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", textDecoration: "none", display: "flex", alignItems: "center", gap: "4px" }}
+        >
+          📱 WhatsApp
+        </a>
+        <a
+          href="https://twitter.com/intent/tweet?text=Can%20you%20clear%20the%20Strait%20of%20Hormuz%20before%20oil%20hits%20%24200%2Fbbl%3F&url=https%3A%2F%2Fhormuzstraitsweeper.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ padding: "6px 14px", background: "#1da1f2", color: "#fff", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", textDecoration: "none", display: "flex", alignItems: "center", gap: "4px" }}
+        >
+          🐦 Tweet
+        </a>
+        <button
+          onClick={() => {
+            navigator.clipboard?.writeText("https://hormuzstraitsweeper.com");
+          }}
+          style={{ padding: "6px 14px", background: "#444", color: "#fff", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+        >
+          🔗 Copy Link
+        </button>
+      </div>
+
+      {/* Mobile instructions */}
+      {isMobile && (
+        <div style={{ color: "#667788", fontSize: "11px", marginTop: "6px", fontFamily: "monospace", textAlign: "center" }}>
+          Tap: Reveal | Long press: Flag/Unflag
+        </div>
+      )}
 
       {/* Bottom Ad */}
       <AdBanner slot="0987654321" style={{ marginTop: "16px", maxWidth: gridW }} />
